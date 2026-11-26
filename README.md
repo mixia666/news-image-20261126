@@ -1,5 +1,8 @@
 # The World in One Day — 26 November 2026
 
+[![make.fun · news-image-20261126](https://make.fun/badge/news-image-20261126.svg)](https://make.fun/bounty/news-image-20261126?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261126)
+[![rank](https://make.fun/badge/news-image-20261126/mixia666/news-image-20261126/rank.svg)](https://make.fun/bounty/news-image-20261126/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261126)
+[![reward](https://make.fun/badge/news-image-20261126/mixia666/news-image-20261126/reward.svg)](https://make.fun/bounty/news-image-20261126?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261126)
 [![make.fun](https://make.fun/badge.svg)](https://make.fun/bounty/news-image-20261126)
 [![owner](https://img.shields.io/badge/owner-mixia666-blue)](https://github.com/mixia666)
 [![repo](https://img.shields.io/badge/repo-news--image--20261126-green)](https://github.com/mixia666/news-image-20261126)
