@@ -1,189 +1,273 @@
 #!/usr/bin/env python3
-"""Draw "The World in One Day" for Thursday 26 November 2026.
+"""Draw the 26 November 2026 front page: one 1024x1024 PNG broadsheet.
 
-A one-page broadsheet, 1024x1024 PNG, summing up the day's world news
-for the make.fun news-image-20261126 entry. The front-page art
-(hero.png, kept beside this file) is an AI-generated woodcut-style
-illustration of the lead story; every headline and paragraph below was
-reported on 26 November 2026 (Reuters, Arab News, The Japan Times,
-SCMP, The Economic Times, Open Chronicle). Deterministic: the same
-inputs give the same bytes every run.
-
-Run:  python3 draw.py            (writes entry.png beside this file)
+Layout, top to bottom: dateline, masthead, double rule, lead kicker +
+headline + deck, the woodcut hero image with caption, a rule, two columns
+of three side stories each, an ALSO TODAY strip, and a sources footer.
+All text is wrapped by measured pixel width so nothing overflows the page.
+Deterministic: the same inputs always produce the same bytes.
 """
+
+import hashlib
+import os
+import sys
+
 from PIL import Image, ImageDraw, ImageFont
 
-W = H = 1024
-PAPER = (248, 245, 238)
-INK = (21, 20, 18)
-GREY = (92, 86, 76)
-RED = (163, 28, 28)
-RULE = (35, 33, 30)
-FAINT = (168, 160, 146)
+PAGE = 1024
+MARGIN = 36
+CONTENT_W = PAGE - 2 * MARGIN
+PAPER = (248, 243, 232)
+INK = (25, 25, 25)
+RED = (161, 29, 33)
+GREY = (107, 101, 88)
+RULE = (25, 25, 25)
 
-SERIF_B = "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
-SERIF = "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"
-SERIF_I = "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"
-SANS_B = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+SERIF = "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
+SERIF_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
+SANS_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def F(path, size):
+def font(path, size):
     return ImageFont.truetype(path, size)
 
 
-img = Image.new("RGB", (W, H), PAPER)
-d = ImageDraw.Draw(img)
-MX = 36                 # side margin
-X1 = W - MX             # right edge of the text block
-CW = X1 - MX            # column width
-
-
-def hline(y, x0=MX, x1=X1, w=2, fill=RULE):
-    d.line([(x0, y), (x1, y)], fill=fill, width=w)
-
-
-def centered(text, y, fnt, fill=INK):
-    tw = d.textlength(text, font=fnt)
-    d.text(((W - tw) / 2, y), text, font=fnt, fill=fill)
-    return y + fnt.size
-
-
-def wrap(text, fnt, max_w):
-    words, lines, cur = text.split(), [], ""
-    for wd in words:
-        trial = (cur + " " + wd).strip()
-        if d.textlength(trial, font=fnt) <= max_w:
-            cur = trial
-        else:
-            lines.append(cur)
-            cur = wd
-    if cur:
-        lines.append(cur)
+def wrap(draw, text, fnt, width):
+    """Greedy word wrap by measured width; returns a list of lines."""
+    lines = []
+    for paragraph in text.split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            trial = current + " " + word
+            if draw.textlength(trial, font=fnt) <= width:
+                current = trial
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
     return lines
 
 
-def block(text, x, y, fnt, max_w, leading, fill=INK):
-    for ln in wrap(text, fnt, max_w):
-        d.text((x, y), ln, font=fnt, fill=fill)
+def draw_lines(draw, lines, x, y, fnt, fill, leading):
+    for line in lines:
+        draw.text((x, y), line, font=fnt, fill=fill)
         y += leading
     return y
 
 
-def story(x, y, col_w, kicker, head, body):
-    d.text((x, y), kicker, font=F(SANS_B, 13), fill=RED)
-    y += 18
-    y = block(head, x, y, F(SERIF_B, 22), col_w, 25)
-    y += 2
-    y = block(body, x, y, F(SERIF, 16), col_w, 20, fill=(45, 42, 38))
+def centred(draw, text, y, fnt, fill):
+    w = draw.textlength(text, font=fnt)
+    draw.text(((PAGE - w) / 2, y), text, font=fnt, fill=fill)
+    return y + fnt.size + 6
+
+
+def rule(draw, x0, x1, y, weight=1):
+    draw.line([(x0, y), (x1, y)], fill=RULE, width=weight)
+    return y + weight
+
+
+def double_rule(draw, y):
+    rule(draw, MARGIN, PAGE - MARGIN, y, 3)
+    return rule(draw, MARGIN, PAGE - MARGIN, y + 6, 1) + 4
+
+
+LEAD_KICKER = "STRAIT OF HORMUZ \u00b7 THE IRAN WAR"
+LEAD_HEADLINE = "Two More Tankers Hit Mines in Hormuz"
+LEAD_DECK = (
+    "Iran's Revolutionary Guards said two more tankers \u2014 one a supertanker "
+    "carrying over two million barrels of crude \u2014 exploded and caught fire "
+    "after striking mines north of Oman's Khasab port, and an LNG carrier was "
+    "reported ablaze too. Brent crude climbed toward $95."
+)
+CAPTION = (
+    "A supertanker burns in the strait as smoke rises over the cliffs "
+    "and a naval mine rides the swell."
+)
+
+# (kicker, headline, body) for the six side stories.
+LEFT_STORIES = [
+    (
+        "SAUDI ARABIA",
+        "Houthis Say They Hit Ras Tanura",
+        "Yemen's Houthis said they struck Saudi Arabia's largest oil refinery, "
+        "a second blow to Gulf energy.",
+    ),
+    (
+        "UNITED STATES \u00b7 TRADE",
+        "Trump Hits 14 Partners With Tariffs",
+        "President Trump unveiled tariffs of up to 25% on 14 trading partners; "
+        "Japan and India pushed back.",
+    ),
+    (
+        "GAZA",
+        "Israeli Strikes Kill Nine in Gaza",
+        "Overnight strikes killed at least nine Palestinians, including a "
+        "Hamas-appointed deputy minister.",
+    ),
+]
+RIGHT_STORIES = [
+    (
+        "UKRAINE",
+        "Russian Missiles Hit Kyiv and Odesa",
+        "Russian missiles hit Kyiv and grain ships near Odesa; Trump and NATO's "
+        "chief urged restraint.",
+    ),
+    (
+        "NORTH KOREA",
+        "Kim Vows to Build More Nuclear Arms",
+        "Kim Jong Un showed off progress in the North's nuclear programme and "
+        "vowed to build more weapons.",
+    ),
+    (
+        "MARKETS \u00b7 ENERGY",
+        "Oil Nears $95 as Gold Slides",
+        "Brent crude rose to about $94.71 on the Gulf supply scare, while gold "
+        "slid to 15-month lows.",
+    ),
+]
+
+ALSO_TODAY = (
+    "A second U.S. judge blocks Trump's birthright citizenship order \u00b7 "
+    "New York postpones the 100th Macy's Thanksgiving Day Parade as a huge "
+    "storm bears down \u00b7 Dozens dead and hurt in a Cairo Ring Road fire \u00b7 "
+    "SpaceX wins U.S. approval for space data centres \u00b7 U.S. famine "
+    "monitor halts reporting as funding runs out \u00b7 Myanmar rejects parts "
+    "of the world court's genocide ruling"
+)
+SOURCES = (
+    "Reporting: Reuters \u00b7 Arab News \u00b7 The Japan Times \u00b7 SCMP \u00b7 "
+    "The Economic Times \u00b7 Open Chronicle"
+)
+
+
+def draw_column(draw, stories, x, width, y):
+    kicker_f = font(SANS_BOLD, 15)
+    head_f = font(SERIF_BOLD, 21)
+    body_f = font(SERIF, 16)
+    for kicker, headline, body in stories:
+        y = draw_lines(draw, [kicker], x, y, kicker_f, RED, 21)
+        head_lines = wrap(draw, headline, head_f, width)
+        y = draw_lines(draw, head_lines, x, y, head_f, INK, 26)
+        body_lines = wrap(draw, body, body_f, width)
+        y = draw_lines(draw, body_lines, x, y, body_f, INK, 22)
+        y += 7
     return y
 
 
-# ---- masthead -------------------------------------------------------------
-y = 22
-y = centered("THURSDAY · 26 NOVEMBER 2026 · ONE PAGE, THE WHOLE DAY",
-             y, F(SANS_B, 15), fill=GREY)
-y += 6
-y = centered("THE WORLD IN ONE DAY", y, F(SERIF_B, 54))
-y += 8
-hline(y, w=3)
-y += 4
-hline(y, w=1)
-y += 13
+def build():
+    page = Image.new("RGB", (PAGE, PAGE), PAPER)
+    draw = ImageDraw.Draw(page)
 
-# ---- lead -----------------------------------------------------------------
-d.text((MX, y), "STRAIT OF HORMUZ · THE IRAN WAR", font=F(SANS_B, 14), fill=RED)
-y += 22
-y = block("Two More Tankers Hit Mines in Hormuz", MX, y, F(SERIF_B, 52), CW, 58)
-y += 2
-y = block("Iran's Revolutionary Guards said two more tankers — one a "
-          "supertanker carrying over two million barrels of crude — "
-          "exploded and caught fire after striking mines north of Oman's "
-          "Khasab port, and an LNG carrier was reported ablaze too. "
-          "Brent crude climbed toward $95.",
-          MX, y, F(SERIF, 19), CW, 24, fill=(45, 42, 38))
-y += 10
+    y = 20
+    y = centred(
+        draw,
+        "THURSDAY \u00b7 26 NOVEMBER 2026 \u00b7 ONE PAGE, THE WHOLE DAY",
+        y,
+        font(SERIF_BOLD, 18),
+        GREY,
+    )
+    y += 2
+    y = centred(draw, "THE WORLD IN ONE DAY", y, font(SERIF_BOLD, 56), INK)
+    y = double_rule(draw, y + 4)
 
-# ---- front-page art ---------------------------------------------------------
-art = Image.open("hero.png").convert("RGB")
-img.paste(art, (MX, y))
-d.rectangle([MX, y, MX + art.width - 1, y + art.height - 1], outline=RULE, width=2)
-y += art.height + 6
-y = block("A supertanker burns in the strait as smoke rises over the "
-          "cliffs and a naval mine rides the swell.",
-          MX, y, F(SANS, 13), CW, 16, fill=GREY)
-y += 8
-hline(y, w=2)
-y += 12
+    y += 10
+    y = draw_lines(
+        draw, [LEAD_KICKER], MARGIN, y, font(SANS_BOLD, 18), RED, 24
+    )
+    head_f = font(SERIF_BOLD, 40)
+    head_lines = wrap(draw, LEAD_HEADLINE, head_f, CONTENT_W)
+    if len(head_lines) > 2:
+        raise SystemExit("lead headline needs more than two lines")
+    y = draw_lines(draw, head_lines, MARGIN, y, head_f, INK, 48)
+    y += 4
+    deck_f = font(SERIF, 20)
+    deck_lines = wrap(draw, LEAD_DECK, deck_f, CONTENT_W)
+    if len(deck_lines) > 4:
+        raise SystemExit("lead deck needs more than four lines")
+    y = draw_lines(draw, deck_lines, MARGIN, y, deck_f, INK, 26)
+    print("after lead: y=%d headline_lines=%d deck_lines=%d"
+          % (y, len(head_lines), len(deck_lines)), file=sys.stderr)
+    y += 8
 
-# ---- two columns ------------------------------------------------------------
-GUT = 28
-COLW = (CW - GUT) // 2
-LX, RX = MX, MX + COLW + GUT
-top = y
+    hero = Image.open(os.path.join(HERE, "hero.png")).convert("RGB")
+    hero_w, hero_h = hero.size
+    target_w = 800
+    target_h = round(hero_h * target_w / hero_w)
+    hero = hero.resize((target_w, target_h), Image.LANCZOS)
+    hero_x = (PAGE - target_w) // 2
+    frame = Image.new("RGB", (target_w + 4, target_h + 4), INK)
+    frame.paste(hero, (2, 2))
+    page.paste(frame, (hero_x - 2, y))
+    y += target_h + 4
+    y += 5
+    caption_f = font(SERIF, 15)
+    caption_lines = wrap(draw, CAPTION, caption_f, CONTENT_W)
+    y = draw_lines(draw, caption_lines, MARGIN, y, caption_f, GREY, 20)
+    print("after hero: y=%d hero_h=%d caption_lines=%d"
+          % (y, target_h, len(caption_lines)), file=sys.stderr)
+    y += 6
+    y = rule(draw, MARGIN, PAGE - MARGIN, y, 1)
+    y += 10
 
-ly = top
-ly = story(LX, ly, COLW, "SAUDI ARABIA",
-           "Houthis Say They Hit Ras Tanura Refinery",
-           "Yemen's Houthis said they struck Saudi Arabia's largest oil "
-           "refinery, the day's second blow to Gulf energy after the "
-           "mine strikes in the strait.")
-ly += 11
-ly = story(LX, ly, COLW, "UNITED STATES · TRADE",
-           "Trump Hits 14 Partners With New Tariffs",
-           "President Trump unveiled tariffs of up to 25% on 14 trading "
-           "partners, accusing them of flooding markets with excess "
-           "output; Japan and India pushed back.")
-ly += 11
-ly = story(LX, ly, COLW, "GAZA",
-           "Israeli Strikes Kill Nine in Gaza",
-           "Overnight airstrikes and gunfire killed at least nine "
-           "Palestinians, medics said, including the Hamas-appointed "
-           "deputy education minister.")
+    col_w = (CONTENT_W - 40) // 2
+    col_top = y
+    left_end = draw_column(draw, LEFT_STORIES, MARGIN, col_w, y)
+    right_end = draw_column(
+        draw, RIGHT_STORIES, MARGIN + col_w + 40, col_w, y
+    )
+    col_bottom = max(left_end, right_end)
+    print("after columns: left_end=%d right_end=%d"
+          % (left_end, right_end), file=sys.stderr)
+    divider_x = MARGIN + col_w + 20
+    draw.line(
+        [(divider_x, col_top), (divider_x, col_bottom - 9)],
+        fill=GREY,
+        width=1,
+    )
+    y = col_bottom + 2
+    y = rule(draw, MARGIN, PAGE - MARGIN, y, 1)
+    y += 8
+    y = draw_lines(
+        draw, ["ALSO TODAY"], MARGIN, y, font(SANS_BOLD, 18), RED, 24
+    )
+    also_f = font(SERIF, 18)
+    also_lines = wrap(draw, ALSO_TODAY, also_f, CONTENT_W)
+    if len(also_lines) > 5:
+        raise SystemExit("ALSO TODAY needs more than five lines")
+    y = draw_lines(draw, also_lines, MARGIN, y, also_f, INK, 24)
+    print("after also: y=%d also_lines=%d" % (y, len(also_lines)),
+          file=sys.stderr)
+    y += 8
+    y = rule(draw, MARGIN, PAGE - MARGIN, y, 1)
+    y += 6
+    y = centred(draw, SOURCES, y, font(SERIF, 15), GREY)
 
-ry = top
-ry = story(RX, ry, COLW, "UKRAINE",
-           "Russia's Missiles Hit Kyiv and Grain Ships",
-           "Russian ballistic missiles struck Kyiv, wounding seven, and "
-           "hit grain ships near Odesa; Trump and NATO's chief urged "
-           "Moscow not to widen the war.")
-ry += 11
-ry = story(RX, ry, COLW, "NORTH KOREA",
-           "Kim Vows to Build More Nuclear Arms",
-           "Kim Jong Un showed off progress in the North's nuclear "
-           "programme and vowed to build more weapons, brushing aside "
-           "President Trump's overtures.")
-ry += 11
-ry = story(RX, ry, COLW, "MARKETS · ENERGY",
-           "Oil Nears $95 as Gold Slides",
-           "Brent crude rose to about $94.71 on the Gulf supply scare, "
-           "while gold slid to 15-month lows as U.S. rate-hike bets "
-           "grew.")
+    if y > PAGE - 8:
+        raise SystemExit("page overflow: content ends at y=%d" % y)
+    print("layout ok: content ends at y=%d" % y, file=sys.stderr)
+    return page
 
-y = max(ly, ry) + 10
-d.line([(MX + COLW + GUT // 2, top), (MX + COLW + GUT // 2, y - 16)],
-       fill=FAINT, width=1)
 
-# ---- also today -------------------------------------------------------------
-hline(y, w=2)
-y += 9
-d.text((MX, y), "ALSO TODAY", font=F(SANS_B, 14), fill=RED)
-y += 20
-y = block("A second U.S. judge blocks Trump's new birthright citizenship "
-          "order · New York postpones the 100th Macy's Thanksgiving Day "
-          "Parade as a huge storm bears down · Dozens dead and hurt in a "
-          "Cairo Ring Road fire · SpaceX wins U.S. approval to launch "
-          "space data centres · U.S. famine monitor halts reporting as "
-          "funding runs out · Myanmar rejects parts of the world court's "
-          "genocide ruling",
-          MX, y, F(SERIF, 16), CW, 21, fill=(45, 42, 38))
-y += 9
-hline(y, w=1)
-y += 7
-centered("Reporting: Reuters · Arab News · The Japan Times · SCMP · "
-         "The Economic Times · Open Chronicle", y, F(SANS, 13), fill=GREY)
+def main():
+    out_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+        HERE, "entry.png"
+    )
+    page = build()
+    page.save(out_path, format="PNG", optimize=False)
+    digest = hashlib.sha256(open(out_path, "rb").read()).hexdigest()
+    size = os.path.getsize(out_path)
+    print("wrote %s (%d bytes, sha256 %s)" % (out_path, size, digest))
+    if size > 1048576:
+        raise SystemExit("entry.png exceeds the 1 MiB cap")
+    if page.size != (1024, 1024):
+        raise SystemExit("entry.png is not 1024x1024")
 
-assert y + 30 <= H, f"page overflow: content ends at {y}"
-img.quantize(colors=256, method=Image.Quantize.MEDIANCUT).save(
-    "entry.png", optimize=True)
-print("wrote entry.png, content ends at y =", y)
+
+if __name__ == "__main__":
+    main()
